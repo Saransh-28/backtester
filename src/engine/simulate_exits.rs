@@ -1,11 +1,13 @@
 // src/engine/simulate_exits.rs
 
+use rayon::prelude::*;
 use crate::engine::position::Position;
 
-/// SL → TP → EXP.  All PnL & fees in $, slippage only shifts the fill price.
+/// For each open position, scan forward bar-by-bar for SL → TP → EXP.
+/// Parallelized over positions with Rayon.
 pub fn simulate_position_exits(
     positions: &mut [Position],
-    timestamps: &[f64],  // for expiration
+    timestamps: &[f64],  // for expiration check
     high: &[f64],
     low: &[f64],
     close: &[f64],
@@ -14,9 +16,11 @@ pub fn simulate_position_exits(
 ) {
     let n = high.len();
 
-    for pos in positions.iter_mut() {
-        if pos.is_closed { continue; }
-
+    positions.par_iter_mut().for_each(|pos| {
+        if pos.is_closed {
+            return;
+        }
+        // walk from entry_index to end
         for j in pos.entry_index..n {
             let hit_sl = match pos.position_type.as_str() {
                 "long"  => low[j]  <= pos.sl,
@@ -32,7 +36,7 @@ pub fn simulate_position_exits(
                 .map_or(false, |t_exp| timestamps[j] >= t_exp);
 
             if hit_sl || hit_tp || expired {
-                // 1) Choose raw exit price
+                // 1) Select raw exit price
                 let raw_exit = if hit_sl {
                     pos.sl
                 } else if hit_tp {
@@ -41,35 +45,42 @@ pub fn simulate_position_exits(
                     close[j]
                 };
 
-                // 2) Apply slippage to get reported fill price
-                let exit_price = match pos.position_type.as_str() {
-                    "long"  => raw_exit * (1.0 - slippage_rate),
-                    "short" => raw_exit * (1.0 + slippage_rate),
-                    _       => raw_exit,
+                // 2) Apply slippage to get fill
+                let exit_price = if pos.position_type == "long" {
+                    raw_exit * (1.0 - slippage_rate)
+                } else {
+                    raw_exit * (1.0 + slippage_rate)
                 };
                 let slippage_exit = (raw_exit - exit_price).abs();
 
-                // 3) Fee on notional
+                // 3) Compute exit fee on notional
                 let fee_exit = pos.position_size * exit_price * exit_fee_rate;
 
-                // 4) Record in the struct
+                // 4) Record metadata
                 pos.exit_index     = Some(j);
                 pos.exit_price     = Some(exit_price);
-                pos.exit_condition = Some(if hit_sl {"SL"} else if hit_tp {"TP"} else {"EXP"}.into());
+                pos.exit_condition = Some(
+                    if hit_sl {"SL"} else if hit_tp {"TP"} else {"EXP"}
+                .to_string());
                 pos.slippage_exit  = slippage_exit;
                 pos.fee_exit       = fee_exit;
                 pos.is_closed      = true;
 
                 // 5) Compute net PnL in $
-                //    PnL = (fill_exit - fill_entry) * units  -  (fee_entry + fee_exit)
-                let gross_pnl = (exit_price - pos.entry_price)
-                              * pos.position_size
-                              * if pos.position_type=="long" { 1.0 } else {-1.0};
-                let pnl       = gross_pnl - (pos.fee_entry + pos.fee_exit);
+                let gross_pnl = if pos.position_type == "long" {
+                    (exit_price - pos.entry_price) * pos.position_size
+                } else {
+                    (pos.entry_price - exit_price) * pos.position_size
+                };
+                let pnl = gross_pnl - (pos.fee_entry + pos.fee_exit);
 
-                // 6) Returns
-                let absolute_return = (exit_price / pos.entry_price) - 1.0;
-                let real_return     = if pos.entry_price * pos.position_size > 0.0 {
+                // 6) Compute returns
+                let absolute_return = if pos.entry_price != 0.0 {
+                    (exit_price / pos.entry_price) - 1.0
+                } else {
+                    0.0
+                };
+                let real_return = if pos.entry_price * pos.position_size != 0.0 {
                     pnl / (pos.entry_price * pos.position_size)
                 } else {
                     0.0
@@ -82,5 +93,5 @@ pub fn simulate_position_exits(
                 break;
             }
         }
-    }
+    });
 }
