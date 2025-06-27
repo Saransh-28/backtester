@@ -1,0 +1,84 @@
+use crate::engine::position::Position;
+
+/// For each signal at bar i, enter on bar i+1 open (or bar i if last),
+/// and pull expiration from the entry bar’s timestamp.
+pub fn scan_entries(
+    _timestamps: &[f64],         // unused—silence the warning
+    open: &[f64],
+    long: &[bool],
+    short: &[bool],
+    long_tp: &[f64],
+    long_sl: &[f64],
+    short_tp: &[f64],
+    short_sl: &[f64],
+    long_size: &[f64],
+    short_size: &[f64],
+    expiration_times: &[f64],
+    entry_fee_rate: f64,
+    slippage_rate: f64,
+) -> Vec<Position> {
+    let mut positions = Vec::new();
+    let n = open.len();
+
+    for i in 0..n {
+        let entry_idx = if i + 1 < n { i + 1 } else { i };
+        let raw_open  = open[entry_idx];
+        let exp_time  = expiration_times.get(entry_idx).copied();
+
+        if long[i] {
+            let entry_price     = raw_open * (1.0 + slippage_rate);
+            let slippage_entry  = entry_price - raw_open;
+            let fee_entry       = long_size[i] * entry_price * entry_fee_rate;
+            positions.push(Position {
+                position_id:      entry_idx,
+                position_type:    "long".into(),
+                entry_index:      entry_idx,
+                entry_price,
+                tp:               long_tp[i],
+                sl:               long_sl[i],
+                expiration_time:  exp_time,
+                exit_index:       None,
+                exit_price:       None,
+                exit_condition:   None,
+                position_size:    long_size[i],
+                fee_entry,
+                fee_exit:         0.0,
+                slippage_entry,
+                slippage_exit:    0.0,
+                absolute_return:  None,
+                real_return:      None,
+                pnl:              None,
+                is_closed:        false,
+            });
+        }
+
+        if short[i] {
+            let entry_price     = raw_open * (1.0 - slippage_rate);
+            let slippage_entry  = raw_open - entry_price;
+            let fee_entry       = short_size[i] * entry_price * entry_fee_rate;
+            positions.push(Position {
+                position_id:      entry_idx,
+                position_type:    "short".into(),
+                entry_index:      entry_idx,
+                entry_price,
+                tp:               short_tp[i],
+                sl:               short_sl[i],
+                expiration_time:  exp_time,
+                exit_index:       None,
+                exit_price:       None,
+                exit_condition:   None,
+                position_size:    short_size[i],
+                fee_entry,
+                fee_exit:         0.0,
+                slippage_entry,
+                slippage_exit:    0.0,
+                absolute_return:  None,
+                real_return:      None,
+                pnl:              None,
+                is_closed:        false,
+            });
+        }
+    }
+
+    positions
+}
