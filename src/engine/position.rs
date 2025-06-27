@@ -2,23 +2,42 @@
 
 #[derive(Clone, Debug)]
 pub struct Position {
-    pub position_id:        usize,          // entry bar index
-    pub position_type:      String,         // "long" or "short"
-    pub entry_index:        usize,          // bar of fill
-    pub entry_price:        f64,            // fill price (includes slippage)
-    pub tp:                 f64,            // raw TP price level
-    pub sl:                 f64,            // raw SL price level
-    pub expiration_time:    Option<f64>,    // absolute timestamp to force EXP
-    pub exit_index:         Option<usize>,  // bar of fill
-    pub exit_price:         Option<f64>,    // fill price (includes slippage)
-    pub exit_condition:     Option<String>, // "TP", "SL", or "EXP"
-    pub position_size:      f64,            // number of units/contracts
-    pub fee_entry:          f64,            // $ cost at entry
-    pub fee_exit:           f64,            // $ cost at exit
-    pub slippage_entry:     f64,            // price delta at entry
-    pub slippage_exit:      f64,            // price delta at exit
-    pub absolute_return:    Option<f64>,    // (exit_price/entry_price - 1)
-    pub real_return:        Option<f64>,    // net $ PnL / (entry_price*units)
-    pub pnl:                Option<f64>,    // net $ PnL
+    /// The entry timestamp (UNIX seconds) of this position
+    pub position_id:        f64,
+    /// "long" or "short"
+    pub position_type:      String,
+    /// Bar‐index at which this position was filled
+    pub entry_index:        usize,
+    /// Fill price (includes slippage)
+    pub entry_price:        f64,
+    /// Absolute take‐profit level
+    pub tp:                 f64,
+    /// Absolute stop‐loss level
+    pub sl:                 f64,
+    /// Optional expiration timestamp (must be ≥ position_id)
+    pub expiration_time:    Option<f64>,
+    /// Bar‐index at which this position was closed
+    pub exit_index:         Option<usize>,
+    /// Fill price at exit (includes slippage)
+    pub exit_price:         Option<f64>,
+    /// "TP", "SL", or "EXP"
+    pub exit_condition:     Option<String>,
+    /// Number of units/contracts
+    pub position_size:      f64,
+    /// $ fee charged at entry
+    pub fee_entry:          f64,
+    /// $ fee charged at exit
+    pub fee_exit:           f64,
+    /// Price‐delta slippage at entry (reporting only)
+    pub slippage_entry:     f64,
+    /// Price‐delta slippage at exit (reporting only)
+    pub slippage_exit:      f64,
+    /// (exit_price/entry_price − 1)
+    pub absolute_return:    Option<f64>,
+    /// net $ PnL / (entry_price×units)
+    pub real_return:        Option<f64>,
+    /// net $ PnL
+    pub pnl:                Option<f64>,
+    /// true once closed
     pub is_closed:          bool,
 }
