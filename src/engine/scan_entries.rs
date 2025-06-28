@@ -34,7 +34,7 @@ pub fn scan_entries(
         let entry_idx = if i + 1 < n { i + 1 } else { i };
         let entry_ts  = timestamps[entry_idx];
         let raw_open  = open[entry_idx];
-        let exp_time  = expiration_times.get(entry_idx).copied();
+        let exp_time  = expiration_times.get(i).copied();
 
         // 2) Expiration sanity‐check
         if let Some(et) = exp_time {
