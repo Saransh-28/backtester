@@ -3,11 +3,11 @@
 use rayon::prelude::*;
 use crate::engine::position::Position;
 
-/// For each open position, scan forward bar-by-bar for SL → TP → EXP.
-/// Parallelized over positions with Rayon.
+/// Parallel exit simulation: SL → TP → EXP.  
+/// Each position scans forward from its entry in parallel.
 pub fn simulate_position_exits(
     positions: &mut [Position],
-    timestamps: &[f64],  // for expiration check
+    timestamps: &[f64],
     high: &[f64],
     low: &[f64],
     close: &[f64],
@@ -20,23 +20,27 @@ pub fn simulate_position_exits(
         if pos.is_closed {
             return;
         }
-        // walk from entry_index to end
+
+        // walk bars from entry to end
         for j in pos.entry_index..n {
-            let hit_sl = match pos.position_type.as_str() {
-                "long"  => low[j]  <= pos.sl,
-                "short" => high[j] >= pos.sl,
-                _       => false,
+            // 1) SL/TP checks
+            let hit_sl = if pos.position_type=="long" {
+                low[j] <= pos.sl
+            } else {
+                high[j] >= pos.sl
             };
-            let hit_tp = match pos.position_type.as_str() {
-                "long"  => high[j] >= pos.tp,
-                "short" => low[j]  <= pos.tp,
-                _       => false,
+            let hit_tp = if pos.position_type=="long" {
+                high[j] >= pos.tp
+            } else {
+                low[j] <= pos.tp
             };
+
+            // 2) Expiration
             let expired = pos.expiration_time
-                .map_or(false, |t_exp| timestamps[j] >= t_exp);
+                .map_or(false, |et| timestamps[j] >= et);
 
             if hit_sl || hit_tp || expired {
-                // 1) Select raw exit price
+                // Raw exit price
                 let raw_exit = if hit_sl {
                     pos.sl
                 } else if hit_tp {
@@ -44,19 +48,17 @@ pub fn simulate_position_exits(
                 } else {
                     close[j]
                 };
-
-                // 2) Apply slippage to get fill
-                let exit_price = if pos.position_type == "long" {
+                // Slippage on exit
+                let exit_price = if pos.position_type=="long" {
                     raw_exit * (1.0 - slippage_rate)
                 } else {
                     raw_exit * (1.0 + slippage_rate)
                 };
                 let slippage_exit = (raw_exit - exit_price).abs();
-
-                // 3) Compute exit fee on notional
+                // Fees
                 let fee_exit = pos.position_size * exit_price * exit_fee_rate;
 
-                // 4) Record metadata
+                // Write back
                 pos.exit_index     = Some(j);
                 pos.exit_price     = Some(exit_price);
                 pos.exit_condition = Some(
@@ -66,25 +68,21 @@ pub fn simulate_position_exits(
                 pos.fee_exit       = fee_exit;
                 pos.is_closed      = true;
 
-                // 5) Compute net PnL in $
-                let gross_pnl = if pos.position_type == "long" {
+                // PnL calculation
+                let gross_pnl = if pos.position_type=="long" {
                     (exit_price - pos.entry_price) * pos.position_size
                 } else {
                     (pos.entry_price - exit_price) * pos.position_size
                 };
                 let pnl = gross_pnl - (pos.fee_entry + pos.fee_exit);
 
-                // 6) Compute returns
+                // Returns
                 let absolute_return = if pos.entry_price != 0.0 {
                     (exit_price / pos.entry_price) - 1.0
-                } else {
-                    0.0
-                };
+                } else { 0.0 };
                 let real_return = if pos.entry_price * pos.position_size != 0.0 {
                     pnl / (pos.entry_price * pos.position_size)
-                } else {
-                    0.0
-                };
+                } else { 0.0 };
 
                 pos.absolute_return = Some(absolute_return);
                 pos.real_return     = Some(real_return);

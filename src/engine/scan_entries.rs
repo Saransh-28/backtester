@@ -2,8 +2,10 @@
 
 use crate::engine::position::Position;
 
-/// For each signal on bar i, enter on bar i+1 open (or bar i if last bar).
-/// Signals must be mutually exclusive.  Expiration_time[k] ≥ timestamps[k].
+/// For each signal on bar i:
+///  - we fill at bar i+1 open (or i if it's the last bar)
+///  - we panic if both long[i] and short[i] are true
+///  - expiration_times is aligned to the *signal* bar (i)
 pub fn scan_entries(
     timestamps: &[f64],
     open: &[f64],
@@ -21,76 +23,64 @@ pub fn scan_entries(
 ) -> Vec<Position> {
     let n = open.len();
 
-    // 1) Mutual‐exclusion check
+    // 1) Mutual-exclusion check + count total signals
+    let mut total_signals = 0;
     for i in 0..n {
         if long[i] && short[i] {
-            panic!("Both long and short signals true at bar {}", i);
+            panic!("Signal conflict at bar {}: both long and short are true", i);
+        }
+        if long[i] || short[i] {
+            total_signals += 1;
         }
     }
 
-    let mut positions = Vec::new();
+    // 2) Reserve capacity up-front
+    let mut positions = Vec::with_capacity(total_signals);
+
+    // 3) Build Position structs
     for i in 0..n {
-        // Determine fill bar (i+1 or last bar)
+        if !(long[i] || short[i]) {
+            continue;
+        }
+
+        // fill bar
         let entry_idx = if i + 1 < n { i + 1 } else { i };
         let entry_ts  = timestamps[entry_idx];
-        let raw_open  = open[entry_idx];
-        let exp_time  = expiration_times.get(i).copied();
+        let price     = open[entry_idx];
 
-        // 2) Expiration sanity‐check
+        // expiration is aligned to the *signal* bar
+        let exp_time = expiration_times.get(i).copied();
         if let Some(et) = exp_time {
             if et < entry_ts {
                 panic!(
-                    "Expiration time {} before entry time {} at bar {}",
-                    et, entry_ts, entry_idx
+                    "Expiration time {} < entry time {} for signal bar {}",
+                    et, entry_ts, i
                 );
             }
         }
 
-        // LONG entry
-        if long[i] {
-            let entry_price    = raw_open * (1.0 + slippage_rate);
-            let slippage_entry = entry_price - raw_open;
-            let fee_entry      = long_size[i] * entry_price * entry_fee_rate;
-            positions.push(Position {
-                position_id:      entry_ts,
-                position_type:    "long".into(),
-                entry_index:      entry_idx,
-                entry_price,
-                tp:               long_tp[i],
-                sl:               long_sl[i],
-                expiration_time:  exp_time,
-                exit_index:       None,
-                exit_price:       None,
-                exit_condition:   None,
-                position_size:    long_size[i],
-                fee_entry,
-                fee_exit:         0.0,
-                slippage_entry,
-                slippage_exit:    0.0,
-                absolute_return:  None,
-                real_return:      None,
-                pnl:              None,
-                is_closed:        false,
-            });
-        }
+        // helper closure to push a new position
+        let mut push_pos = |side: &str, tp: f64, sl: f64, size: f64| {
+            let entry_price    = if side=="long" {
+                price * (1.0 + slippage_rate)
+            } else {
+                price * (1.0 - slippage_rate)
+            };
+            let slippage_entry = (entry_price - price).abs();
+            let fee_entry      = size * entry_price * entry_fee_rate;
 
-        // SHORT entry
-        if short[i] {
-            let entry_price    = raw_open * (1.0 - slippage_rate);
-            let slippage_entry = raw_open - entry_price;
-            let fee_entry      = short_size[i] * entry_price * entry_fee_rate;
             positions.push(Position {
                 position_id:      entry_ts,
-                position_type:    "short".into(),
+                position_type:    side.into(),
                 entry_index:      entry_idx,
                 entry_price,
-                tp:               short_tp[i],
-                sl:               short_sl[i],
+                tp,
+                sl,
                 expiration_time:  exp_time,
                 exit_index:       None,
                 exit_price:       None,
                 exit_condition:   None,
-                position_size:    short_size[i],
+                position_size:    size,
                 fee_entry,
                 fee_exit:         0.0,
                 slippage_entry,
@@ -100,6 +90,12 @@ pub fn scan_entries(
                 pnl:              None,
                 is_closed:        false,
             });
+        };
+
+        if long[i] {
+            push_pos("long", long_tp[i], long_sl[i], long_size[i]);
+        } else {
+            push_pos("short", short_tp[i], short_sl[i], short_size[i]);
         }
     }
 
